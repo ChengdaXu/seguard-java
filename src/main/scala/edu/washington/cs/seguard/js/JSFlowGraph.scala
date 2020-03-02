@@ -125,7 +125,7 @@ object JSFlowGraph {
         assert(ret.startsWith("global "))
         ret = ret.stripPrefix("global ")
         if (ret == "__WALA__int3rnal__global" ||
-            ret == "Function") { // point to global context
+          ret == "Function") { // point to global context
           None
         } else {
           Some(ret)
@@ -171,6 +171,29 @@ object JSFlowGraph {
     }
   }
 
+  def getName(u: String, instruction: SSAInstruction, node: CGNode,
+              globalVarMap: HashMap[String, HashMap[Int, String]], aliasMap: HashMap[String, HashMap[Int, Int]]): String = {
+    var u_complete = u
+    val namespace = node.toString  // name of the function where these variables are defined
+    if (isApplicationNode(node)) {
+      if (!globalVarMap.contains(namespace)) {
+        globalVarMap.put(namespace, new HashMap())
+      }
+      if (instruction.isInstanceOf[AstGlobalRead]) { // global variable
+        val key = instruction.getDef();
+        if (!globalVarMap(namespace).contains(key)) {
+          globalVarMap(namespace).put(key, u_complete)
+        }
+      } else if (instruction.isInstanceOf[SSAGetInstruction]) {
+        val idx = aliasMap(namespace)(instruction.asInstanceOf[SSAGetInstruction].getRef())
+        val key = instruction.getDef();
+        u_complete = globalVarMap(namespace)(idx) + "[" + instruction.asInstanceOf[SSAGetInstruction].getDeclaredField.getName.toString + "]";
+        globalVarMap(namespace).put(key, u_complete)
+      }
+    }
+    u_complete
+  }
+
   def addDataFlowGraph(dot: BetterDot, cg: CallGraph) {
     // IFDS based data-flow analysis
     val icfg = ExplodedInterproceduralCFG.make(cg)
@@ -188,7 +211,7 @@ object JSFlowGraph {
         println("===============================")
         // The IR we used here is in SSA form
         for (instruction <- n.getIR().getInstructions()) {
-          if (instruction != null && instruction.isInstanceOf[PrototypeLookup]) {
+          if (instruction != null && instruction.isInstanceOf[PrototypeLookup] && !localAliasMap.contains(instruction.getDef(0))) {
             localAliasMap.put(instruction.getDef(0), instruction.getUse(0))
           }
         }
@@ -234,12 +257,18 @@ object JSFlowGraph {
             val to = absValues.fst
             val fromValues = absValues.snd
             for (from <- fromValues.asScala) {
-              val fromValue = getDef(node.getNode.getDU, symTable, from)
-              val toValue = getDef(node.getNode.getDU, symTable, to)
-              if (fromValue.isDefined && toValue.isDefined) {
-                dot.drawNode(fromValue.get, NodeType.EXPR)
-                dot.drawNode(toValue.get, NodeType.EXPR)
-                dot.drawEdge(fromValue.get, toValue.get, EdgeType.DATAFLOW)
+              val defUse = node.getNode.getDU
+              val from_raw = getDef(defUse, symTable, from)
+              val to_raw = getDef(defUse, symTable, to)
+              if (from_raw.isDefined && to_raw.isDefined) {
+                if (from_raw.get.contains("exports(f)") || to_raw.get.contains("exports(f)")) {
+                  println("here111")
+                }
+                val fromValue = getName(from_raw.get, defUse.getDef(from), node.getNode, globalVarMap, aliasMap);
+                val toValue = getName(to_raw.get, defUse.getDef(to), node.getNode, globalVarMap, aliasMap);
+                dot.drawNode(fromValue, NodeType.EXPR)
+                dot.drawNode(toValue, NodeType.EXPR)
+                dot.drawEdge(fromValue, toValue, EdgeType.DATAFLOW)
               }
             }
           }
@@ -247,19 +276,21 @@ object JSFlowGraph {
           abstractInstruction(node.getNode.getDU, symTable, instruction) match {
             case Some(u) => {
               // DefUse based analysis
-              var u_complete = u
-              val namespace = node.getNode.toString // name of the function where these variables are defined
-              if (!globalVarMap.contains(namespace)) {
-                globalVarMap.put(namespace, new HashMap());
+              val u_complete = getName(u, instruction, node.getNode, globalVarMap, aliasMap);
+              if (u_complete.contains("_compile([get]constructor(), decoded, )")) {
+                println("here11111")
               }
-              if (instruction.isInstanceOf[AstGlobalRead]) { // global variable
-                val key = instruction.getDef();
-                globalVarMap(namespace).put(key, u_complete)
-              } else if (instruction.isInstanceOf[SSAGetInstruction]) {
-                val idx = aliasMap(namespace)(instruction.asInstanceOf[SSAGetInstruction].getRef())
-                u_complete = globalVarMap(namespace)(idx) + "[" + instruction.asInstanceOf[SSAGetInstruction].getDeclaredField.getName.toString + "]";
-                globalVarMap(namespace).put(instruction.getDef(), u_complete)
-              }
+              //              if (!globalVarMap.contains(namespace)) {
+              //                globalVarMap.put(namespace, new HashMap());
+              //              }
+              //              if (instruction.isInstanceOf[AstGlobalRead]) { // global variable
+              //                val key = instruction.getDef();
+              //                globalVarMap(namespace).put(key, u_complete)
+              //              } else if (instruction.isInstanceOf[SSAGetInstruction]) {
+              //                val idx = aliasMap(namespace)(instruction.asInstanceOf[SSAGetInstruction].getRef())
+              //                u_complete = globalVarMap(namespace)(idx) + "[" + instruction.asInstanceOf[SSAGetInstruction].getDeclaredField.getName.toString + "]";
+              //                globalVarMap(namespace).put(instruction.getDef(), u_complete)
+              //              }
               dot.drawNode(u_complete, NodeType.STMT)
               for (iu <- 0 until instruction.getNumberOfUses) {
                 val use = instruction.getUse(iu)

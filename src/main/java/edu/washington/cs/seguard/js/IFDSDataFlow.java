@@ -1,6 +1,7 @@
 package edu.washington.cs.seguard.js;
 
 import com.ibm.wala.cast.ir.ssa.AstGlobalRead;
+import com.ibm.wala.cast.ir.ssa.AstGlobalWrite;
 import com.ibm.wala.cast.ir.ssa.AstLexicalWrite;
 import com.ibm.wala.cast.ir.ssa.EachElementGetInstruction;
 import com.ibm.wala.cast.js.ssa.*;
@@ -23,10 +24,7 @@ import com.ibm.wala.util.intset.MutableMapping;
 import com.ibm.wala.util.intset.MutableSparseIntSet;
 import lombok.val;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 public class IFDSDataFlow {
   private final IClassHierarchy cha;
@@ -41,7 +39,7 @@ public class IFDSDataFlow {
   }
 
   /**
-   * controls numbering of putstatic instructions for use in tabulation
+   * Define a Dataflow Domain, which maps an int (SSA variable) to a set of integers (dependency SSA variables)
    */
   @SuppressWarnings("serial")
 private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>> implements
@@ -59,9 +57,10 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
   private class DataFlowFunctions implements IPartiallyBalancedFlowFunctions<BasicBlockInContext<IExplodedBasicBlock>> {
 
     private final DataFlowDomain domain;
-
+    private final Map<String, Map<Integer, Integer>> aliasMap;
     protected DataFlowFunctions(DataFlowDomain domain) {
       this.domain = domain;
+      aliasMap = new HashMap();
     }
 
     /**
@@ -104,6 +103,11 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
       return KillEverything.singleton();
     }
 
+//    private boolean isApplicationNode(CGNode node) {
+////      val className = node.getMethod().getD
+//      return JSFlowGraph.isApplicationNode()
+//    }
+
     /**
      * flow function for normal intraprocedural edges
      */
@@ -112,20 +116,40 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
                                                     BasicBlockInContext<IExplodedBasicBlock> dest) {
       return d1 -> {
         val instr = src.getDelegate().getInstruction();
+        if (instr != null && instr.toString().contains("process")) {
+          int a = 1;
+        }
         MutableSparseIntSet result = MutableSparseIntSet.makeEmpty();
         if (instr == null || instr.getNumberOfUses() < 1 || instr instanceof JavaScriptCheckReference
-                || instr instanceof SetPrototype || instr instanceof PrototypeLookup
+                || instr instanceof SetPrototype
                 || instr instanceof SSAConditionalBranchInstruction || instr instanceof AstLexicalWrite
                 || instr instanceof JavaScriptTypeOfInstruction || instr instanceof EachElementGetInstruction) {
+//          System.out.println(1);
           // do nothing
+        } else if (instr instanceof PrototypeLookup) {
+          if (JSFlowGraph.isApplicationNode(src.getNode())) {
+            val namespace = src.getNode().toString();
+            if (!aliasMap.containsKey(namespace)) {
+              aliasMap.put(namespace, new HashMap<>());
+            }
+            aliasMap.get(namespace).put(instr.getDef(0), instr.getUse(0));
+          }
         } else if (instr instanceof SSAGetInstruction) {
           val getInstr = (SSAGetInstruction) instr;
-          val from = getInstr.getUse(0);
+          int from = getInstr.getUse(0);
           val to = getInstr.getDef();
+          if (JSFlowGraph.isApplicationNode(src.getNode())) {
+            val namespace = src.getNode().toString();
+            val localAliasMap = aliasMap.get(namespace);
+            from = localAliasMap.getOrDefault(from, from);
+          }
           val factNum = domain.add(Pair.make(to, Collections.singleton(from)));
           result.add(factNum);
-        } else if (instr instanceof SSAPutInstruction) {
+        } else if (instr instanceof SSAPutInstruction) { // AstGlobalWrite
           val putInstr = (SSAPutInstruction) instr;
+          if (putInstr.toString().contains("npm_package_desc")) {
+            System.out.println(111);
+          }
           if (putInstr.getNumberOfUses() > 1) {
             val from = putInstr.getUse(1);
             val to = putInstr.getUse(0);
@@ -156,6 +180,8 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
           val factNum = domain.add(Pair.make(to, fromSet));
           result.add(factNum);
         } else if (instr instanceof SSAUnaryOpInstruction) {
+          // decode d1 to domain
+          // scala union type
           val from1 = instr.getUse(0);
           val to = instr.getDef();
           val fromSet = new HashSet<Integer>();
