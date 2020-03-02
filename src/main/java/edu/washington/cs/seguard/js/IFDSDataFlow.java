@@ -23,6 +23,7 @@ import com.ibm.wala.util.intset.IntSet;
 import com.ibm.wala.util.intset.MutableMapping;
 import com.ibm.wala.util.intset.MutableSparseIntSet;
 import lombok.val;
+import scala.Int;
 
 import java.util.*;
 
@@ -57,10 +58,21 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
   private class DataFlowFunctions implements IPartiallyBalancedFlowFunctions<BasicBlockInContext<IExplodedBasicBlock>> {
 
     private final DataFlowDomain domain;
+    // For PrototypeLookup statement like v9 = prototype_values(v29), we would treat v9 as an alias of v29.
+    // This aliasMap tracks all aliases
     private final Map<String, Map<Integer, Integer>> aliasMap;
+    // This map is used to process ASTGloablWrite instruction. For example, for instruction
+    // global:global npm_package_desc = v26, we know that there is dataflow from v26 to
+    // npm_package_desc, so this map would record the name of global variables and the most
+    // recent variable whose value is assigned to the global variable.
+    private final Map<String, Integer> globalVarMap;
+    // For every key value pair (int i, Set<Integer> set) -> int idx in domain, we would put a (i, idx) pair
+    // in idxMap, so that we can easily find the idx associated with i, and thus get the set of facts easily
+//    private final Map<Integer, Integer> idxMap;
     protected DataFlowFunctions(DataFlowDomain domain) {
       this.domain = domain;
       aliasMap = new HashMap();
+      globalVarMap = new HashMap<>();
     }
 
     /**
@@ -103,11 +115,6 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
       return KillEverything.singleton();
     }
 
-//    private boolean isApplicationNode(CGNode node) {
-////      val className = node.getMethod().getD
-//      return JSFlowGraph.isApplicationNode()
-//    }
-
     /**
      * flow function for normal intraprocedural edges
      */
@@ -116,16 +123,21 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
                                                     BasicBlockInContext<IExplodedBasicBlock> dest) {
       return d1 -> {
         val instr = src.getDelegate().getInstruction();
-        if (instr != null && instr.toString().contains("process")) {
-          int a = 1;
-        }
         MutableSparseIntSet result = MutableSparseIntSet.makeEmpty();
-        if (instr == null || instr.getNumberOfUses() < 1 || instr instanceof JavaScriptCheckReference
+        if (instr instanceof AstGlobalRead) {
+          val readInstr = (AstGlobalRead) instr;
+          if (globalVarMap.containsKey(readInstr.getGlobalName())) {
+            val from = globalVarMap.get(readInstr.getGlobalName());
+            val to = readInstr.getDef();
+            val factNum = domain.add(Pair.make(to, Collections.singleton(from)));
+            result.add(factNum);
+          }
+        } else if (instr == null || instr.getNumberOfUses() < 1 || instr instanceof JavaScriptCheckReference
                 || instr instanceof SetPrototype
                 || instr instanceof SSAConditionalBranchInstruction || instr instanceof AstLexicalWrite
                 || instr instanceof JavaScriptTypeOfInstruction || instr instanceof EachElementGetInstruction) {
-//          System.out.println(1);
           // do nothing
+          int a = 1;
         } else if (instr instanceof PrototypeLookup) {
           if (JSFlowGraph.isApplicationNode(src.getNode())) {
             val namespace = src.getNode().toString();
@@ -145,11 +157,11 @@ private class DataFlowDomain extends MutableMapping<Pair<Integer, Set<Integer>>>
           }
           val factNum = domain.add(Pair.make(to, Collections.singleton(from)));
           result.add(factNum);
-        } else if (instr instanceof SSAPutInstruction) { // AstGlobalWrite
+        } else if (instr instanceof AstGlobalWrite) {
+          val writeInstr = (AstGlobalWrite) instr;
+          globalVarMap.put(writeInstr.getGlobalName(), writeInstr.getVal());
+        } else if (instr instanceof SSAPutInstruction) {
           val putInstr = (SSAPutInstruction) instr;
-          if (putInstr.toString().contains("npm_package_desc")) {
-            System.out.println(111);
-          }
           if (putInstr.getNumberOfUses() > 1) {
             val from = putInstr.getUse(1);
             val to = putInstr.getUse(0);

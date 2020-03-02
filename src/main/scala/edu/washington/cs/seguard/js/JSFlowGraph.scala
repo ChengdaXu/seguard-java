@@ -261,9 +261,6 @@ object JSFlowGraph {
               val from_raw = getDef(defUse, symTable, from)
               val to_raw = getDef(defUse, symTable, to)
               if (from_raw.isDefined && to_raw.isDefined) {
-                if (from_raw.get.contains("exports(f)") || to_raw.get.contains("exports(f)")) {
-                  println("here111")
-                }
                 val fromValue = getName(from_raw.get, defUse.getDef(from), node.getNode, globalVarMap, aliasMap);
                 val toValue = getName(to_raw.get, defUse.getDef(to), node.getNode, globalVarMap, aliasMap);
                 dot.drawNode(fromValue, NodeType.EXPR)
@@ -277,20 +274,6 @@ object JSFlowGraph {
             case Some(u) => {
               // DefUse based analysis
               val u_complete = getName(u, instruction, node.getNode, globalVarMap, aliasMap);
-              if (u_complete.contains("_compile([get]constructor(), decoded, )")) {
-                println("here11111")
-              }
-              //              if (!globalVarMap.contains(namespace)) {
-              //                globalVarMap.put(namespace, new HashMap());
-              //              }
-              //              if (instruction.isInstanceOf[AstGlobalRead]) { // global variable
-              //                val key = instruction.getDef();
-              //                globalVarMap(namespace).put(key, u_complete)
-              //              } else if (instruction.isInstanceOf[SSAGetInstruction]) {
-              //                val idx = aliasMap(namespace)(instruction.asInstanceOf[SSAGetInstruction].getRef())
-              //                u_complete = globalVarMap(namespace)(idx) + "[" + instruction.asInstanceOf[SSAGetInstruction].getDeclaredField.getName.toString + "]";
-              //                globalVarMap(namespace).put(instruction.getDef(), u_complete)
-              //              }
               dot.drawNode(u_complete, NodeType.STMT)
               for (iu <- 0 until instruction.getNumberOfUses) {
                 val use = instruction.getUse(iu)
